@@ -1,0 +1,58 @@
+name: Build NeoZygisk 289 Supercell
+on:
+  push:
+    paths:
+      - '.github/workflows/build-supercell.yml'
+      - 'apply_patch.py'
+      - 'supercell_vector_filter.hpp'
+      - 'test_supercell_vector_filter.cpp'
+      - 'verify_build.py'
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Clone pinned official source
+        run: |
+          git clone https://github.com/JingMatrix/NeoZygisk.git neo
+          cd neo
+          git checkout 08080ef
+          git submodule update --init --recursive
+          test "$(git rev-parse --short HEAD)" = 08080ef
+      - name: Apply source patch
+        run: python3 apply_patch.py neo
+      - name: Unit tests
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -I. test_supercell_vector_filter.cpp -o /tmp/test_supercell_vector_filter
+          /tmp/test_supercell_vector_filter
+      - name: Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Android SDK
+        uses: android-actions/setup-android@v3
+      - name: Set up Rust nightly
+        run: |
+          rustup toolchain install nightly --profile minimal
+          cd neo
+          rustup override set nightly
+          rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android
+      - name: Install cargo-ndk as upstream CI does
+        run: cargo install cargo-ndk --locked
+      - name: Build installable module ZIP
+        working-directory: neo
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon zipDebug -Dorg.gradle.jvmargs=-Xmx2048m
+      - name: Verify compiled ZIP and hashes
+        run: python3 verify_build.py
+      - name: Upload installable ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: NeoZygisk-289-Supercell-PRE-DLOPEN-UNTESTED
+          path: neo/module/build/outputs/release/NeoZygisk-*-debug.zip
+          if-no-files-found: error
